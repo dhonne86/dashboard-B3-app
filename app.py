@@ -180,20 +180,283 @@ def build_market_payload():
     if not assets:
         assets = build_sample_assets()
 
+    enrich_assets_with_agents(assets)
+
     winners = sorted(assets, key=lambda item: item["variacao"], reverse=True)
+    signal_summary = summarize_entry_signals(assets)
 
     return {
         "atualizado_em": end.strftime("%d/%m/%Y %H:%M"),
         "fonte": "brapi.dev" if any(item["fonte"] == "brapi" for item in assets) else "dados locais",
         "mercado": "B3",
+        "agentes": {
+            "analise_mercado": "ativo",
+            "sinais_entrada": "ativo",
+            "validade_sinal": "proximo_pregao",
+        },
         "resumo": {
             "ativos": len(assets),
             "alta": winners[0]["ticker"],
             "baixa": winners[-1]["ticker"],
             "media": round(sum(item["variacao"] for item in assets) / len(assets), 2),
+            "sinais": signal_summary,
         },
         "ativos": assets,
     }
+
+
+def enrich_assets_with_agents(assets):
+    for asset in assets:
+        analysis = market_analysis_agent(asset)
+        asset["analise"] = analysis
+        asset["sinal_entrada"] = entry_signal_agent(asset, analysis)
+
+
+def market_analysis_agent(asset):
+    points = asset["historico"]
+    closes = [point["close"] for point in points if point.get("close")]
+    highs = [point["high"] for point in points if point.get("high")]
+    lows = [point["low"] for point in points if point.get("low")]
+    volumes = [point["volume"] for point in points if point.get("volume") is not None]
+    last = closes[-1] if closes else asset["preco"]
+    short_window = max(3, min(5, len(closes)))
+    long_window = max(short_window, min(20, len(closes)))
+    short_avg = average(closes[-short_window:]) if closes else last
+    long_avg = average(closes[-long_window:]) if closes else last
+    long_first = closes[-long_window] if closes else last
+    slope = pct_change(long_first, last)
+    period_return = pct_change(closes[0], last) if closes else 0
+    short_return = pct_change(closes[-min(3, len(closes))], last) if len(closes) > 1 else 0
+    up_days = count_up_days(closes[-6:])
+    max_price = max(highs) if highs else asset["maxima"]
+    min_price = min(lows) if lows else asset["minima"]
+    price_range = max(max_price - min_price, 0.01)
+    range_position = ((last - min_price) / price_range) * 100
+    avg_volume = average(volumes) if volumes else max(asset["volume"], 1)
+    volume_relative = asset["volume"] / avg_volume if avg_volume else 1
+    volatility = average(
+        [((point["high"] - point["low"]) / point["close"]) * 100 for point in points if point.get("close")]
+    )
+    amplitude = ((max_price - min_price) / last) * 100 if last else 0
+    support = min(lows[-10:]) if lows else min_price
+    resistance = max(highs[-10:]) if highs else max_price
+
+    if last > short_avg and short_avg > long_avg:
+        trend = "alta"
+    elif last < short_avg and short_avg < long_avg:
+        trend = "baixa"
+    else:
+        trend = "lateral"
+
+    if range_position >= 70 and asset["variacao"] > 1 and volume_relative >= 1.1:
+        strength = "forte"
+    elif range_position < 35 or asset["variacao"] < -1 or volume_relative < 0.7:
+        strength = "fraca"
+    else:
+        strength = "moderada"
+
+    if short_return > 0 and period_return > 0 and up_days >= 3:
+        momentum = "acelerando"
+    elif period_return > 0 and short_return < -1.5:
+        momentum = "reversao_baixa"
+    elif period_return > 0 and short_return < 0:
+        momentum = "perdendo_forca"
+    elif period_return < 0 and short_return > 0:
+        momentum = "reversao_alta"
+    else:
+        momentum = "neutro"
+
+    if volatility > 3.5 or amplitude > 12 or (trend == "baixa" and strength == "fraca"):
+        risk = "alto"
+    elif volatility < 1.5 and trend in ("alta", "lateral") and range_position >= 50:
+        risk = "baixo"
+    else:
+        risk = "medio"
+
+    score = min(
+        100,
+        trend_score(trend) + strength_score(strength) + momentum_score(momentum) + risk_score(risk),
+    )
+
+    return {
+        "agente": "analise_mercado",
+        "tendencia": trend,
+        "forca": strength,
+        "momentum": momentum,
+        "risco": risk,
+        "score": round(score),
+        "vies": trend.upper() if trend != "lateral" else "NEUTRO",
+        "suporte": round(support, 2),
+        "resistencia": round(resistance, 2),
+        "detalhes": {
+            "media_curta": round(short_avg, 2),
+            "media_longa": round(long_avg, 2),
+            "inclinacao_pct": round(slope, 2),
+            "retorno_periodo_pct": round(period_return, 2),
+            "retorno_curto_pct": round(short_return, 2),
+            "posicao_range_pct": round(range_position, 2),
+            "volume_relativo": round(volume_relative, 2),
+            "volatilidade_pct": round(volatility, 2),
+            "dias_alta": up_days,
+            "qualidade_dados": round(min(100, (len(points) / 20) * 100)),
+        },
+    }
+
+
+def entry_signal_agent(asset, analysis):
+    price = asset["preco"]
+    support = analysis["suporte"]
+    resistance = analysis["resistencia"]
+    volatility_pct = analysis["detalhes"]["volatilidade_pct"]
+    quality = analysis["detalhes"]["qualidade_dados"]
+    volume_relative = analysis["detalhes"]["volume_relativo"]
+    volume_score = 100 if volume_relative >= 1.2 else 70 if volume_relative >= 1 else 40
+
+    if quality < 60 or price <= 0 or support <= 0 or resistance <= 0 or support >= resistance:
+        return hold_signal("Dados insuficientes para sinal operacional.", quality, volume_score)
+
+    buy_stop = min(support * 0.995, price * (1 - max(0.008, (volatility_pct / 100) * 0.60)))
+    buy_target = min(price + ((price - buy_stop) * 1.8), resistance * 1.01)
+    buy_rr = risk_reward(price, buy_stop, buy_target, "COMPRA")
+
+    sell_stop = max(resistance * 1.005, price * (1 + max(0.008, (volatility_pct / 100) * 0.60)))
+    sell_target = max(price - ((sell_stop - price) * 1.8), support * 0.99)
+    sell_rr = risk_reward(price, sell_stop, sell_target, "VENDA")
+
+    confidence = calculate_signal_confidence(analysis, max(buy_rr, sell_rr), volume_score)
+
+    buy_conditions = (
+        analysis["vies"] == "ALTA"
+        and analysis["score"] >= 60
+        and analysis["momentum"] in ("acelerando", "reversao_alta")
+        and support < price < resistance
+        and buy_rr >= 1.5
+        and confidence >= 65
+        and analysis["risco"] != "alto"
+    )
+    sell_conditions = (
+        analysis["vies"] == "BAIXA"
+        and analysis["score"] >= 60
+        and analysis["momentum"] in ("reversao_baixa", "perdendo_forca")
+        and support < price < resistance
+        and sell_rr >= 1.5
+        and confidence >= 65
+    )
+
+    if buy_conditions:
+        return {
+            "agente": "sinais_entrada",
+            "sinal": "COMPRA",
+            "preco_entrada": round(price, 2),
+            "stop": round(buy_stop, 2),
+            "alvo": round(buy_target, 2),
+            "risco_retorno": round(buy_rr, 2),
+            "confianca": confidence,
+            "validade": "proximo_pregao",
+            "justificativa_curta": "Vies de alta com momentum favoravel e risco-retorno minimo atendido.",
+        }
+
+    if sell_conditions:
+        return {
+            "agente": "sinais_entrada",
+            "sinal": "VENDA",
+            "preco_entrada": round(price, 2),
+            "stop": round(sell_stop, 2),
+            "alvo": round(sell_target, 2),
+            "risco_retorno": round(sell_rr, 2),
+            "confianca": confidence,
+            "validade": "proximo_pregao",
+            "justificativa_curta": "Vies de baixa com perda de momentum e risco-retorno minimo atendido.",
+        }
+
+    return hold_signal("Sem alinhamento suficiente entre tendencia, momentum e risco-retorno.", quality, volume_score)
+
+
+def hold_signal(reason, quality, volume_score):
+    confidence = round(min(100, (0.55 * quality) + (0.45 * volume_score)))
+    return {
+        "agente": "sinais_entrada",
+        "sinal": "AGUARDAR",
+        "preco_entrada": None,
+        "stop": None,
+        "alvo": None,
+        "risco_retorno": None,
+        "confianca": confidence,
+        "validade": "proximo_pregao",
+        "justificativa_curta": reason,
+    }
+
+
+def summarize_entry_signals(assets):
+    summary = {"COMPRA": 0, "VENDA": 0, "AGUARDAR": 0}
+    for asset in assets:
+        signal = asset.get("sinal_entrada", {}).get("sinal", "AGUARDAR")
+        summary[signal] = summary.get(signal, 0) + 1
+    return summary
+
+
+def average(values):
+    valid = [value for value in values if value is not None]
+    return sum(valid) / len(valid) if valid else 0
+
+
+def pct_change(start, end):
+    return ((end - start) / start) * 100 if start else 0
+
+
+def count_up_days(closes):
+    return sum(1 for index in range(1, len(closes)) if closes[index] > closes[index - 1])
+
+
+def risk_reward(entry, stop, target, signal):
+    if signal == "COMPRA":
+        risk = entry - stop
+        reward = target - entry
+    else:
+        risk = stop - entry
+        reward = entry - target
+    return reward / risk if risk > 0 and reward > 0 else 0
+
+
+def calculate_signal_confidence(analysis, rr, volume_score):
+    momentum_value = {
+        "acelerando": 80,
+        "reversao_alta": 65,
+        "neutro": 45,
+        "perdendo_forca": 55,
+        "reversao_baixa": 70,
+    }.get(analysis["momentum"], 45)
+    quality = analysis["detalhes"]["qualidade_dados"]
+    confidence = (
+        0.35 * analysis["score"]
+        + 0.25 * momentum_value
+        + 0.20 * quality
+        + 0.10 * min(rr / 2, 1) * 100
+        + 0.10 * volume_score
+    )
+    return round(min(100, confidence))
+
+
+def trend_score(trend):
+    return {"alta": 30, "baixa": 30, "lateral": 15}.get(trend, 0)
+
+
+def strength_score(strength):
+    return {"forte": 25, "moderada": 12, "fraca": 0}.get(strength, 0)
+
+
+def momentum_score(momentum):
+    return {
+        "acelerando": 25,
+        "reversao_alta": 18,
+        "neutro": 10,
+        "perdendo_forca": 18,
+        "reversao_baixa": 25,
+    }.get(momentum, 0)
+
+
+def risk_score(risk):
+    return {"baixo": 20, "medio": 10, "alto": 0}.get(risk, 0)
 
 
 def fetch_brapi_assets():

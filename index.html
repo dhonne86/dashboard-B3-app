@@ -61,6 +61,16 @@
       </article>
     </section>
 
+    <section class="panel agents-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Indicador de tendencia</h2>
+          <p>Dois agentes: analise de mercado e sinais de entrada para o proximo pregao</p>
+        </div>
+      </div>
+      <div id="agentSignals" class="agent-signals"></div>
+    </section>
+
     <section class="panel table-panel">
       <div class="panel-header">
         <div>
@@ -136,6 +146,7 @@
 
       renderSelect(ativos);
       renderRanking(ativos);
+      renderAgentSignals(ativos);
       renderTable(ativos);
       renderMobileAssets(ativos);
       renderChart(ativos.find((asset) => asset.ticker === state.selected));
@@ -201,10 +212,41 @@
         .join("");
     }
 
+    function renderAgentSignals(assets) {
+      document.getElementById("agentSignals").innerHTML = assets
+        .map((asset) => {
+          const analysis = asset.analise;
+          const signal = asset.sinal_entrada;
+          return `
+            <article class="signal-card signal-${signal.sinal.toLowerCase()}">
+              <header>
+                <span>
+                  <strong>${asset.ticker}</strong>
+                  <small>${analysis.tendencia} - ${analysis.forca} - risco ${analysis.risco}</small>
+                </span>
+                <b>${signal.sinal}</b>
+              </header>
+              <div class="signal-grid">
+                <span><small>Score</small><strong>${analysis.score}</strong></span>
+                <span><small>Confianca</small><strong>${signal.confianca}%</strong></span>
+                <span><small>Entrada</small><strong>${signal.preco_entrada ? money.format(signal.preco_entrada) : "-"}</strong></span>
+                <span><small>Stop</small><strong>${signal.stop ? money.format(signal.stop) : "-"}</strong></span>
+                <span><small>Alvo</small><strong>${signal.alvo ? money.format(signal.alvo) : "-"}</strong></span>
+                <span><small>R/R</small><strong>${signal.risco_retorno || "-"}</strong></span>
+              </div>
+              <p>${signal.justificativa_curta}</p>
+            </article>
+          `;
+        })
+        .join("");
+    }
+
     function renderMobileAssets(assets) {
       document.getElementById("mobileAssets").innerHTML = assets
         .map((asset) => {
           const positive = asset.variacao >= 0;
+          const analysis = asset.analise;
+          const signal = asset.sinal_entrada;
           return `
             <article class="asset-card">
               <header>
@@ -214,6 +256,7 @@
                 </span>
                 <b class="${positive ? "positive" : "negative"}">${positive ? "+" : ""}${percent.format(asset.variacao)}%</b>
               </header>
+              <p class="asset-signal">${signal.sinal} - ${analysis.tendencia} - confianca ${signal.confianca}%</p>
               <dl>
                 <div>
                   <dt>Preco</dt>

@@ -267,6 +267,130 @@ td span {
   color: var(--red);
 }
 
+.agents-panel {
+  margin-bottom: 20px;
+}
+
+.agent-signals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.signal-card {
+  display: grid;
+  gap: 14px;
+  min-height: 244px;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--ink);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 16px;
+}
+
+.signal-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signal-card header span,
+.signal-card header strong,
+.signal-card header small {
+  display: block;
+}
+
+.signal-card header strong {
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.signal-card header small,
+.signal-grid small,
+.signal-card p,
+.asset-signal {
+  color: var(--muted);
+}
+
+.signal-card header b {
+  padding: 6px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.signal-compra {
+  border-top-color: var(--green);
+}
+
+.signal-compra header b {
+  color: #007a12;
+}
+
+.signal-venda {
+  border-top-color: var(--red);
+}
+
+.signal-venda header b {
+  color: var(--red);
+}
+
+.signal-aguardar {
+  border-top-color: var(--blue-info);
+}
+
+.signal-aguardar header b {
+  color: var(--blue-info);
+}
+
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.signal-grid span {
+  min-width: 0;
+}
+
+.signal-grid small,
+.signal-grid strong {
+  display: block;
+}
+
+.signal-grid small {
+  margin-bottom: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.signal-grid strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-card p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.asset-signal {
+  margin: -4px 0 14px;
+  border-left: 3px solid var(--blue-info);
+  padding-left: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -333,6 +457,10 @@ td strong {
   }
 
   .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-signals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -427,6 +555,25 @@ td strong {
 
   .ranking-item b {
     font-size: 18px;
+  }
+
+  .agents-panel {
+    margin-bottom: 12px;
+  }
+
+  .agent-signals {
+    display: flex;
+    gap: 10px;
+    margin: 0 -16px;
+    padding: 0 16px 4px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+
+  .signal-card {
+    flex: 0 0 285px;
+    min-height: 250px;
+    scroll-snap-align: start;
   }
 
   .table-panel .table-wrap {
