@@ -117,7 +117,7 @@
 
     async function loadDashboard() {
       try {
-        const response = await fetch("/api/mercado");
+        const response = await fetch("/api/mercado", { credentials: "include" });
         if (!response.ok) throw new Error("Falha ao carregar a API");
         state.data = await response.json();
         state.selected = state.data.ativos[0].ticker;
