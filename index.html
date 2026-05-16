@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard B3</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="dashboard">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Mercado B3</p>
+        <h1>Dashboard B3</h1>
+      </div>
+      <div class="status">
+        <span class="status-dot"></span>
+        <span id="updatedAt">Carregando...</span>
+      </div>
+    </header>
+
+    <section class="metrics" aria-label="Resumo do mercado">
+      <article class="metric">
+        <span>Ativos acompanhados</span>
+        <strong id="totalAssets">-</strong>
+      </article>
+      <article class="metric">
+        <span>Melhor desempenho</span>
+        <strong id="bestAsset">-</strong>
+      </article>
+      <article class="metric">
+        <span>Pior desempenho</span>
+        <strong id="worstAsset">-</strong>
+      </article>
+      <article class="metric">
+        <span>Media do periodo</span>
+        <strong id="avgChange">-</strong>
+      </article>
+    </section>
+
+    <section class="content-grid">
+      <article class="panel chart-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Evolucao dos ativos</h2>
+          <p>Fechamento dos ultimos pregoes da bolsa brasileira</p>
+          </div>
+          <select id="assetSelect" aria-label="Selecionar ativo"></select>
+        </div>
+        <canvas id="priceChart" width="900" height="360"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Ranking</h2>
+            <p>Variacao acumulada no periodo</p>
+          </div>
+        </div>
+        <div id="ranking" class="ranking"></div>
+      </article>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Visao detalhada</h2>
+          <p>Preco, maxima, minima e volume dos ativos da B3</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ativo</th>
+              <th>Tipo</th>
+              <th>Preco</th>
+              <th>Variacao</th>
+              <th>Maxima</th>
+              <th>Minima</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody id="assetTable"></tbody>
+        </table>
+      </div>
+      <div id="mobileAssets" class="mobile-assets" aria-label="Ativos em formato mobile"></div>
+    </section>
+  </main>
+
+  <script>
+    const money = new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+    const percent = new Intl.NumberFormat("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    const compact = new Intl.NumberFormat("pt-BR", {
+      notation: "compact",
+      maximumFractionDigits: 1
+    });
+
+    const state = {
+      data: null,
+      selected: null
+    };
+
+    const chart = document.getElementById("priceChart");
+    const ctx = chart.getContext("2d");
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch("/api/mercado");
+        if (!response.ok) throw new Error("Falha ao carregar a API");
+        state.data = await response.json();
+        state.selected = state.data.ativos[0].ticker;
+        renderDashboard();
+      } catch (error) {
+        document.getElementById("updatedAt").textContent = "Erro ao carregar dados";
+        console.error(error);
+      }
+    }
+
+    function renderDashboard() {
+      const { resumo, ativos, atualizado_em } = state.data;
+      document.getElementById("updatedAt").textContent = `Atualizado em ${atualizado_em}`;
+      if (state.data.fonte) {
+        document.getElementById("updatedAt").textContent += ` · ${state.data.fonte}`;
+      }
+      document.getElementById("totalAssets").textContent = resumo.ativos;
+      document.getElementById("bestAsset").textContent = resumo.alta;
+      document.getElementById("worstAsset").textContent = resumo.baixa;
+      document.getElementById("avgChange").textContent = `${percent.format(resumo.media)}%`;
+
+      renderSelect(ativos);
+      renderRanking(ativos);
+      renderTable(ativos);
+      renderMobileAssets(ativos);
+      renderChart(ativos.find((asset) => asset.ticker === state.selected));
+    }
+
+    function renderSelect(assets) {
+      const select = document.getElementById("assetSelect");
+      select.innerHTML = assets
+        .map((asset) => `<option value="${asset.ticker}">${asset.ticker} - ${asset.nome}</option>`)
+        .join("");
+      select.value = state.selected;
+      select.onchange = (event) => {
+        state.selected = event.target.value;
+        renderRanking(assets);
+        renderChart(assets.find((asset) => asset.ticker === state.selected));
+      };
+    }
+
+    function renderRanking(assets) {
+      const ranking = document.getElementById("ranking");
+      ranking.innerHTML = [...assets]
+        .sort((a, b) => b.variacao - a.variacao)
+        .map((asset) => {
+          const positive = asset.variacao >= 0;
+          return `
+            <button class="ranking-item ${state.selected === asset.ticker ? "active" : ""}" type="button" data-ticker="${asset.ticker}">
+              <span>
+                <strong>${asset.ticker}</strong>
+                <small>${asset.nome}</small>
+              </span>
+              <b class="${positive ? "positive" : "negative"}">${positive ? "+" : ""}${percent.format(asset.variacao)}%</b>
+            </button>
+          `;
+        })
+        .join("");
+
+      ranking.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.selected = button.dataset.ticker;
+          renderSelect(state.data.ativos);
+          renderRanking(state.data.ativos);
+          renderChart(state.data.ativos.find((asset) => asset.ticker === state.selected));
+        });
+      });
+    }
+
+    function renderTable(assets) {
+      document.getElementById("assetTable").innerHTML = assets
+        .map((asset) => {
+          const positive = asset.variacao >= 0;
+          return `
+            <tr>
+              <td><strong>${asset.ticker}</strong><span>${asset.nome}</span></td>
+              <td>${asset.tipo}</td>
+              <td>${money.format(asset.preco)}</td>
+              <td class="${positive ? "positive" : "negative"}">${positive ? "+" : ""}${percent.format(asset.variacao)}%</td>
+              <td>${money.format(asset.maxima)}</td>
+              <td>${money.format(asset.minima)}</td>
+              <td>${compact.format(asset.volume)}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    function renderMobileAssets(assets) {
+      document.getElementById("mobileAssets").innerHTML = assets
+        .map((asset) => {
+          const positive = asset.variacao >= 0;
+          return `
+            <article class="asset-card">
+              <header>
+                <span>
+                  <strong>${asset.ticker}</strong>
+                  <small>${asset.nome} · ${asset.tipo}</small>
+                </span>
+                <b class="${positive ? "positive" : "negative"}">${positive ? "+" : ""}${percent.format(asset.variacao)}%</b>
+              </header>
+              <dl>
+                <div>
+                  <dt>Preco</dt>
+                  <dd>${money.format(asset.preco)}</dd>
+                </div>
+                <div>
+                  <dt>Maxima</dt>
+                  <dd>${money.format(asset.maxima)}</dd>
+                </div>
+                <div>
+                  <dt>Minima</dt>
+                  <dd>${money.format(asset.minima)}</dd>
+                </div>
+                <div>
+                  <dt>Volume</dt>
+                  <dd>${compact.format(asset.volume)}</dd>
+                </div>
+              </dl>
+            </article>
+          `;
+        })
+        .join("");
+    }
+
+    function renderChart(asset) {
+      resizeChart();
+      const points = asset.historico;
+      const values = points.map((point) => point.close);
+      const width = chart.width;
+      const height = chart.height;
+      const isMobile = window.matchMedia("(max-width: 520px)").matches;
+      const padding = isMobile ? 28 : 42;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.strokeStyle = "#e5e7eb";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 5; i++) {
+        const y = padding + ((height - padding * 2) / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding, y);
+        ctx.lineTo(width - padding, y);
+        ctx.stroke();
+      }
+
+      const coordinates = values.map((value, index) => ({
+        x: padding + ((width - padding * 2) / (values.length - 1 || 1)) * index,
+        y: height - padding - ((value - min) / range) * (height - padding * 2)
+      }));
+
+      const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
+      gradient.addColorStop(0, "rgba(16, 185, 129, 0.22)");
+      gradient.addColorStop(1, "rgba(16, 185, 129, 0)");
+
+      ctx.beginPath();
+      coordinates.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.lineTo(coordinates[coordinates.length - 1].x, height - padding);
+      ctx.lineTo(coordinates[0].x, height - padding);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      ctx.beginPath();
+      coordinates.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.strokeStyle = "#10b981";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = "#111827";
+      ctx.font = `${isMobile ? "600 14px" : "600 18px"} Arial`;
+      ctx.fillText(`${asset.ticker} - ${asset.nome}`, padding, 28);
+      ctx.font = "12px Arial";
+      ctx.fillStyle = "#6b7280";
+      ctx.fillText(`${money.format(min)} min`, padding, height - 12);
+      if (!isMobile) {
+        ctx.fillText(`${money.format(max)} max`, width - padding - 92, 24);
+      }
+
+      const last = coordinates[coordinates.length - 1];
+      ctx.fillStyle = "#10b981";
+      ctx.beginPath();
+      ctx.arc(last.x, last.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function resizeChart() {
+      const isMobile = window.matchMedia("(max-width: 520px)").matches;
+      chart.width = isMobile ? 420 : 900;
+      chart.height = isMobile ? 260 : 360;
+    }
+
+    window.addEventListener("resize", () => {
+      if (!state.data || !state.selected) return;
+      renderChart(state.data.ativos.find((asset) => asset.ticker === state.selected));
+    });
+
+    loadDashboard();
+  </script>
+</body>
+</html>

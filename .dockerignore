@@ -1,0 +1,12 @@
+.env
+.git
+.gitignore
+*.log
+__pycache__/
+.yfinance-cache/
+venv/
+node_modules/
+frontend/
+public/
+yarn.lock
+package.json
