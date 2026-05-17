@@ -13,16 +13,41 @@
 </head>
 <body>
   <main class="dashboard">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Mercado B3</p>
-        <h1>Dashboard B3</h1>
+    <header class="appbar">
+      <div class="brand">
+        <span class="brand-mark">B3</span>
+        <span>
+          <strong>Market Desk</strong>
+          <small>Realtime dashboard</small>
+        </span>
       </div>
+      <nav class="nav-pills" aria-label="Secoes do dashboard">
+        <span class="active">Mercado</span>
+        <span>Sinais</span>
+        <span>Historico</span>
+      </nav>
       <div class="status">
         <span class="status-dot"></span>
         <span id="updatedAt">Carregando...</span>
       </div>
     </header>
+
+    <section class="topbar">
+      <div>
+        <p class="eyebrow">Mercado B3</p>
+        <h1>Mesa de monitoramento B3</h1>
+        <p class="lead">Cotacoes, ranking e sinais operacionais em uma visao de trabalho unica.</p>
+      </div>
+      <div class="market-card">
+        <span class="market-card-label">Sessao</span>
+        <strong id="sourceBadge">Sincronizando</strong>
+        <small id="snapshotBadge">Aguardando snapshot</small>
+        <div class="market-card-row">
+          <span>Stream SSE</span>
+          <b id="signalBadge">online</b>
+        </div>
+      </div>
+    </section>
 
     <section class="metrics" aria-label="Resumo do mercado">
       <article class="metric">
@@ -167,6 +192,11 @@
       if (state.data.fonte) {
         document.getElementById("updatedAt").textContent += ` · ${state.data.fonte}`;
       }
+      document.getElementById("sourceBadge").textContent = state.data.fonte || "dados locais";
+      document.getElementById("snapshotBadge").textContent = state.data.snapshot_id
+        ? `Snapshot #${state.data.snapshot_id}`
+        : "Snapshot local";
+      document.getElementById("signalBadge").textContent = state.data.tempo_real?.modo || "SSE";
       document.getElementById("totalAssets").textContent = resumo.ativos;
       document.getElementById("bestAsset").textContent = resumo.alta;
       document.getElementById("worstAsset").textContent = resumo.baixa;
