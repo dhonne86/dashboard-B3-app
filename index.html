@@ -75,6 +75,13 @@
           <select id="assetSelect" aria-label="Selecionar ativo"></select>
         </div>
         <div id="priceChart" class="dygraph-chart" aria-label="Grafico de evolucao do ativo"></div>
+        <div class="chart-insights" aria-label="Resumo do grafico">
+          <span><small>Ultimo</small><strong id="chartLast">-</strong></span>
+          <span><small>Variacao</small><strong id="chartChange">-</strong></span>
+          <span><small>Maxima</small><strong id="chartHigh">-</strong></span>
+          <span><small>Minima</small><strong id="chartLow">-</strong></span>
+          <button id="resetChartZoom" type="button">Resetar zoom</button>
+        </div>
       </article>
 
       <article class="panel">
@@ -143,10 +150,16 @@
       data: null,
       selected: null,
       realtime: null,
-      chart: null
+      chart: null,
+      chartRange: null
     };
 
     const chart = document.getElementById("priceChart");
+    document.getElementById("resetChartZoom").addEventListener("click", () => {
+      if (state.chart && state.chartRange) {
+        state.chart.updateOptions({ dateWindow: state.chartRange });
+      }
+    });
 
     async function loadDashboard() {
       try {
@@ -350,6 +363,12 @@
         Number(point.high || point.close || 0),
         Number(point.low || point.close || 0)
       ]);
+      const closes = rows.map((row) => row[1]);
+      const latest = rows[rows.length - 1];
+      const first = rows[0];
+      const chartChange = first?.[1] ? ((latest[1] - first[1]) / first[1]) * 100 : 0;
+      state.chartRange = [rows[0][0], rows[rows.length - 1][0]];
+      renderChartInsights(latest[1], chartChange, Math.max(...closes), Math.min(...closes));
       const labels = ["Data", "Fechamento", "Abertura", "Maxima", "Minima"];
       const options = {
         title: `${asset.ticker} - ${asset.nome}`,
@@ -387,10 +406,18 @@
       };
 
       if (state.chart) {
-        state.chart.updateOptions({ file: rows, labels, title: options.title });
+        state.chart.updateOptions({ file: rows, labels, title: options.title, dateWindow: state.chartRange });
       } else {
         state.chart = new Dygraph(chart, rows, options);
       }
+    }
+
+    function renderChartInsights(last, variation, high, low) {
+      document.getElementById("chartLast").textContent = money.format(last);
+      document.getElementById("chartChange").textContent = `${variation >= 0 ? "+" : ""}${percent.format(variation)}%`;
+      document.getElementById("chartChange").className = variation >= 0 ? "positive" : "negative";
+      document.getElementById("chartHigh").textContent = money.format(high);
+      document.getElementById("chartLow").textContent = money.format(low);
     }
 
     function pointDate(point, index, total) {

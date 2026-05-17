@@ -18,6 +18,8 @@ Crie um arquivo `.env` com base em `.env.example`:
 
 ```env
 BRAPI_TOKEN=sua_chave_brapi
+GOOGLE_FINANCE_CSV_URL=
+GOOGLE_FINANCE_TIMEOUT=12
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=sua_senha_forte
 DATABASE_PATH=dashboard_b3.sqlite3
@@ -33,6 +35,20 @@ DEBUG=0
 O dashboard abre `/api/mercado/stream` no navegador e recebe novas leituras continuamente. Cada leitura fica persistida no SQLite definido por `DATABASE_PATH`.
 
 Observacao: as cotacoes publicas da B3 normalmente possuem atraso e dados em tempo real oficiais dependem de contratacao B2B. A integracao atual usa `brapi.dev` quando `BRAPI_TOKEN` esta configurado e preserva a estrutura para trocar a fonte por um feed oficial da B3.
+
+## Modelo Google
+
+Para alimentar o dashboard com Google Sheets, publique uma planilha como CSV e configure `GOOGLE_FINANCE_CSV_URL`.
+
+Colunas aceitas: `ticker`, `nome`, `date`, `open`, `high`, `low`, `close`, `volume`, `variacao`. A planilha pode usar `GOOGLEFINANCE` para montar esses campos. Segundo a documentacao oficial do Google Sheets, `GOOGLEFINANCE` busca informacoes atuais ou historicas do Google Finance, mas nem todos os ativos/bolsas sao suportados e dados historicos possuem restricoes de acesso por API.
+
+Exemplo de linhas esperadas no CSV:
+
+```csv
+ticker,nome,date,open,high,low,close,volume,variacao
+PETR4,Petrobras,2026-05-15,38.00,40.00,37.00,39.00,123456,1.20
+VALE3,Vale,2026-05-15,60.00,63.00,59.00,62.00,555000,2.50
+```
 
 Instale dependencias:
 

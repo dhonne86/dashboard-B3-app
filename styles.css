@@ -401,6 +401,53 @@ select {
   text-align: center;
 }
 
+.chart-insights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.chart-insights span,
+.chart-insights button {
+  min-height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 10px 12px;
+}
+
+.chart-insights small,
+.chart-insights strong {
+  display: block;
+}
+
+.chart-insights small {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.chart-insights strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.chart-insights button {
+  color: var(--body);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chart-insights button:hover {
+  border-color: var(--blue-info);
+  color: var(--blue-info);
+}
+
 .ranking {
   display: grid;
   gap: 10px;
@@ -773,6 +820,14 @@ td strong {
   .dygraph-chart .dygraph-legend {
     max-width: calc(100% - 24px);
     font-size: 11px;
+  }
+
+  .chart-insights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chart-insights button {
+    grid-column: 1 / -1;
   }
 
   .ranking {

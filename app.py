@@ -1,6 +1,8 @@
 import os
 import base64
+import csv
 import hmac
+import io
 import json
 import sqlite3
 import time
@@ -33,6 +35,8 @@ load_env_file()
 
 BRAPI_TOKEN = os.environ.get("BRAPI_TOKEN", "")
 BRAPI_URL = "https://brapi.dev/api/quote/{tickers}"
+GOOGLE_FINANCE_CSV_URL = os.environ.get("GOOGLE_FINANCE_CSV_URL", "")
+GOOGLE_FINANCE_TIMEOUT = max(5, int(os.environ.get("GOOGLE_FINANCE_TIMEOUT", "12")))
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "dashboard_b3.sqlite3")
 MARKET_REFRESH_SECONDS = max(15, int(os.environ.get("MARKET_REFRESH_SECONDS", "60")))
 STREAM_HEARTBEAT_SECONDS = max(5, int(os.environ.get("STREAM_HEARTBEAT_SECONDS", "15")))
@@ -217,7 +221,10 @@ def build_market_payload(use_cache=True):
             return cached
 
     end = datetime.now()
-    assets = fetch_brapi_assets()
+    assets = fetch_google_finance_assets()
+
+    if not assets:
+        assets = fetch_brapi_assets()
 
     if not assets:
         assets = build_sample_assets()
@@ -230,7 +237,7 @@ def build_market_payload(use_cache=True):
     payload = {
         "atualizado_em": end.strftime("%d/%m/%Y %H:%M"),
         "atualizado_iso": end.isoformat(timespec="seconds"),
-        "fonte": "brapi.dev" if any(item["fonte"] == "brapi" for item in assets) else "dados locais",
+        "fonte": market_source_label(assets),
         "mercado": "B3",
         "tempo_real": {
             "ativo": True,
@@ -247,6 +254,7 @@ def build_market_payload(use_cache=True):
             "analise_mercado": "ativo",
             "sinais_entrada": "ativo",
             "extracao_b3": "monitorado",
+            "google_finance_model": "ativo" if any(item["fonte"] == "google_finance" for item in assets) else "fallback",
             "validade_sinal": "proximo_pregao",
         },
         "resumo": {
@@ -384,6 +392,14 @@ def fetch_market_snapshots(limit):
     return snapshots
 
 
+def market_source_label(assets):
+    if any(item["fonte"] == "google_finance" for item in assets):
+        return "Google Sheets / GOOGLEFINANCE"
+    if any(item["fonte"] == "brapi" for item in assets):
+        return "brapi.dev"
+    return "dados locais"
+
+
 def enrich_assets_with_agents(assets):
     for asset in assets:
         analysis = market_analysis_agent(asset)
@@ -398,8 +414,8 @@ def market_analysis_agent(asset):
     lows = [point["low"] for point in points if point.get("low")]
     volumes = [point["volume"] for point in points if point.get("volume") is not None]
     last = closes[-1] if closes else asset["preco"]
-    short_window = max(3, min(5, len(closes)))
-    long_window = max(short_window, min(20, len(closes)))
+    short_window = min(5, len(closes)) if closes else 1
+    long_window = min(20, len(closes)) if closes else 1
     short_avg = average(closes[-short_window:]) if closes else last
     long_avg = average(closes[-long_window:]) if closes else last
     long_first = closes[-long_window] if closes else last
@@ -636,6 +652,185 @@ def momentum_score(momentum):
 
 def risk_score(risk):
     return {"baixo": 20, "medio": 10, "alto": 0}.get(risk, 0)
+
+
+def fetch_google_finance_assets():
+    if not GOOGLE_FINANCE_CSV_URL:
+        return []
+
+    request = urllib.request.Request(
+        GOOGLE_FINANCE_CSV_URL,
+        headers={
+            "Accept": "text/csv,text/plain,*/*",
+            "User-Agent": "Dashboard-B3-GoogleFinance/1.0",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=GOOGLE_FINANCE_TIMEOUT) as response:
+            content = response.read().decode("utf-8-sig")
+    except Exception:
+        return []
+
+    rows = list(csv.DictReader(io.StringIO(content)))
+    if not rows:
+        return []
+
+    grouped = {}
+    for row in rows:
+        normalized = {normalize_key(key): value for key, value in row.items() if key}
+        ticker = clean_ticker(normalized.get("ticker") or normalized.get("ativo") or normalized.get("symbol"))
+        if ticker not in B3_TICKERS:
+            continue
+
+        point = google_finance_point(normalized)
+        if point:
+            grouped.setdefault(ticker, {"rows": [], "name": None}).get("rows").append(point)
+
+        name = normalized.get("nome") or normalized.get("name") or normalized.get("empresa")
+        if name:
+            grouped.setdefault(ticker, {"rows": [], "name": None})["name"] = name.strip()
+
+        price = parse_float(normalized.get("preco") or normalized.get("price") or normalized.get("close") or normalized.get("fechamento"))
+        if price is not None and not point:
+            grouped.setdefault(ticker, {"rows": [], "name": None})["rows"].append(
+                google_finance_point_from_quote(normalized, price)
+            )
+
+    assets = []
+    for ticker, bundle in grouped.items():
+        points = sorted(bundle["rows"], key=lambda item: item["date_iso"])
+        if not points:
+            continue
+
+        points = points[-30:]
+        first = points[0]["close"]
+        last = points[-1]["close"]
+        latest = points[-1]
+        variation = parse_float(latest.get("variation"))
+        if variation is None:
+            variation = ((last - first) / first) * 100 if first else 0
+
+        assets.append(
+            {
+                "ticker": ticker,
+                "nome": bundle["name"] or B3_TICKERS[ticker],
+                "tipo": "Acao B3",
+                "preco": round(last, 2),
+                "variacao": round(variation, 2),
+                "maxima": round(max(point["high"] for point in points), 2),
+                "minima": round(min(point["low"] for point in points), 2),
+                "volume": int(latest.get("volume") or 0),
+                "historico": points,
+                "fonte": "google_finance",
+            }
+        )
+
+    return assets
+
+
+def google_finance_point(row):
+    close = parse_float(row.get("close") or row.get("fechamento") or row.get("preco") or row.get("price"))
+    if close is None:
+        return None
+
+    date = parse_sheet_date(row.get("date") or row.get("data") or row.get("dia"))
+    open_price = parse_float(row.get("open") or row.get("abertura")) or close
+    high = parse_float(row.get("high") or row.get("maxima") or row.get("max")) or max(open_price, close)
+    low = parse_float(row.get("low") or row.get("minima") or row.get("min")) or min(open_price, close)
+    volume = parse_int(row.get("volume")) or 0
+
+    return {
+        "date": date.strftime("%d/%m"),
+        "date_iso": date.date().isoformat(),
+        "open": round(open_price, 2),
+        "high": round(high, 2),
+        "low": round(low, 2),
+        "close": round(close, 2),
+        "volume": volume,
+        "variation": parse_float(row.get("variacao") or row.get("change") or row.get("change_pct")),
+    }
+
+
+def google_finance_point_from_quote(row, price):
+    date = parse_sheet_date(row.get("date") or row.get("data") or row.get("dia"))
+    high = parse_float(row.get("maxima") or row.get("high")) or price
+    low = parse_float(row.get("minima") or row.get("low")) or price
+    return {
+        "date": date.strftime("%d/%m"),
+        "date_iso": date.date().isoformat(),
+        "open": price,
+        "high": round(high, 2),
+        "low": round(low, 2),
+        "close": price,
+        "volume": parse_int(row.get("volume")) or 0,
+        "variation": parse_float(row.get("variacao") or row.get("change") or row.get("change_pct")),
+    }
+
+
+def normalize_key(key):
+    key = key.strip().lower()
+    replacements = {
+        "á": "a",
+        "à": "a",
+        "ã": "a",
+        "â": "a",
+        "é": "e",
+        "ê": "e",
+        "í": "i",
+        "ó": "o",
+        "ô": "o",
+        "õ": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+    for old, new in replacements.items():
+        key = key.replace(old, new)
+    return key.replace(" ", "_").replace("%", "pct")
+
+
+def clean_ticker(value):
+    if not value:
+        return ""
+    return str(value).strip().upper().replace("BVMF:", "").replace("B3:", "").replace(".SA", "")
+
+
+def parse_float(value):
+    if value is None or value == "":
+        return None
+    text = str(value).strip().replace("%", "").replace("R$", "").replace(" ", "")
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_int(value):
+    number = parse_float(value)
+    return int(number) if number is not None else None
+
+
+def parse_sheet_date(value):
+    if not value:
+        return datetime.now()
+
+    text = str(value).strip()
+    formats = ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%m/%d/%Y", "%Y/%m/%d")
+    for date_format in formats:
+        try:
+            return datetime.strptime(text, date_format)
+        except ValueError:
+            pass
+
+    try:
+        serial = float(text)
+        return datetime(1899, 12, 30) + timedelta(days=serial)
+    except ValueError:
+        return datetime.now()
 
 
 def fetch_brapi_assets():
