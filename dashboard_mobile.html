@@ -119,7 +119,8 @@
 
     const state = {
       data: null,
-      selected: null
+      selected: null,
+      realtime: null
     };
 
     const chart = document.getElementById("priceChart");
@@ -129,8 +130,8 @@
       try {
         const response = await fetch("/api/mercado", { credentials: "include" });
         if (!response.ok) throw new Error("Falha ao carregar a API");
-        state.data = await response.json();
-        state.selected = state.data.ativos[0].ticker;
+        applyMarketData(await response.json());
+        connectRealtime();
         renderDashboard();
       } catch (error) {
         document.getElementById("updatedAt").textContent = "Erro ao carregar dados";
@@ -138,9 +139,31 @@
       }
     }
 
+    function applyMarketData(data) {
+      state.data = data;
+      const selectedExists = state.selected && data.ativos.some((asset) => asset.ticker === state.selected);
+      state.selected = selectedExists ? state.selected : data.ativos[0].ticker;
+    }
+
+    function connectRealtime() {
+      if (!window.EventSource || state.realtime) return;
+
+      const source = new EventSource("/api/mercado/stream", { withCredentials: true });
+      state.realtime = source;
+
+      source.addEventListener("mercado", (event) => {
+        applyMarketData(JSON.parse(event.data));
+        renderDashboard();
+      });
+
+      source.onerror = () => {
+        document.getElementById("updatedAt").textContent = "Reconectando dados em tempo real...";
+      };
+    }
+
     function renderDashboard() {
       const { resumo, ativos, atualizado_em } = state.data;
-      document.getElementById("updatedAt").textContent = `Atualizado em ${atualizado_em}`;
+      document.getElementById("updatedAt").textContent = `Tempo real - ${atualizado_em}`;
       if (state.data.fonte) {
         document.getElementById("updatedAt").textContent += ` · ${state.data.fonte}`;
       }
@@ -287,6 +310,7 @@
     }
 
     function renderChart(asset) {
+      if (!asset) return;
       resizeChart();
       const points = asset.historico;
       const values = points.map((point) => point.close);

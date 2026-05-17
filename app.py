@@ -1,11 +1,14 @@
 import os
 import base64
 import hmac
+import json
+import sqlite3
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
-from flask import Flask, Response, jsonify, redirect, render_template_string, request
+from flask import Flask, Response, jsonify, redirect, render_template_string, request, stream_with_context
 
 
 app = Flask(__name__)
@@ -30,6 +33,9 @@ load_env_file()
 
 BRAPI_TOKEN = os.environ.get("BRAPI_TOKEN", "")
 BRAPI_URL = "https://brapi.dev/api/quote/{tickers}"
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "dashboard_b3.sqlite3")
+MARKET_REFRESH_SECONDS = max(15, int(os.environ.get("MARKET_REFRESH_SECONDS", "60")))
+STREAM_HEARTBEAT_SECONDS = max(5, int(os.environ.get("STREAM_HEARTBEAT_SECONDS", "15")))
 DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "admin")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 AUTH_REALM = "Dashboard B3"
@@ -161,6 +167,30 @@ def mercado():
     return jsonify(build_market_payload())
 
 
+@app.route("/api/mercado/stream")
+def mercado_stream():
+    def event_stream():
+        last_signature = None
+
+        while True:
+            payload = build_market_payload(use_cache=False)
+            signature = payload.get("snapshot_id") or payload.get("atualizado_iso")
+            if signature != last_signature:
+                yield f"event: mercado\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                last_signature = signature
+            else:
+                heartbeat = {"status": "ok", "atualizado_iso": payload.get("atualizado_iso")}
+                yield f"event: heartbeat\ndata: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
+
+            time.sleep(STREAM_HEARTBEAT_SECONDS)
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.route("/api/acoes")
 def acoes():
     payload = build_market_payload()
@@ -173,8 +203,20 @@ def indices():
     return jsonify([item for item in payload["ativos"] if item["tipo"] == "Indice"])
 
 
-def build_market_payload():
-    end = datetime.today()
+@app.route("/api/snapshots")
+def snapshots():
+    limit = min(max(int(request.args.get("limit", "20")), 1), 100)
+    return jsonify(fetch_market_snapshots(limit))
+
+
+def build_market_payload(use_cache=True):
+    ensure_database()
+    if use_cache:
+        cached = load_cached_market_payload(MARKET_REFRESH_SECONDS)
+        if cached:
+            return cached
+
+    end = datetime.now()
     assets = fetch_brapi_assets()
 
     if not assets:
@@ -185,13 +227,26 @@ def build_market_payload():
     winners = sorted(assets, key=lambda item: item["variacao"], reverse=True)
     signal_summary = summarize_entry_signals(assets)
 
-    return {
+    payload = {
         "atualizado_em": end.strftime("%d/%m/%Y %H:%M"),
+        "atualizado_iso": end.isoformat(timespec="seconds"),
         "fonte": "brapi.dev" if any(item["fonte"] == "brapi" for item in assets) else "dados locais",
         "mercado": "B3",
+        "tempo_real": {
+            "ativo": True,
+            "modo": "SSE",
+            "intervalo_refresh_segundos": MARKET_REFRESH_SECONDS,
+            "intervalo_stream_segundos": STREAM_HEARTBEAT_SECONDS,
+            "observacao": "Cotas publicas da B3 podem ter atraso; APIs oficiais em tempo real exigem contratacao B2B.",
+        },
+        "banco": {
+            "tipo": "sqlite",
+            "arquivo": DATABASE_PATH,
+        },
         "agentes": {
             "analise_mercado": "ativo",
             "sinais_entrada": "ativo",
+            "extracao_b3": "monitorado",
             "validade_sinal": "proximo_pregao",
         },
         "resumo": {
@@ -203,6 +258,130 @@ def build_market_payload():
         },
         "ativos": assets,
     }
+
+    payload["snapshot_id"] = save_market_payload(payload)
+    return payload
+
+
+def ensure_database():
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS asset_quotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id INTEGER NOT NULL,
+                ticker TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                price REAL NOT NULL,
+                variation REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                volume INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                FOREIGN KEY(snapshot_id) REFERENCES market_snapshots(id)
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_created ON market_snapshots(created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_asset_quotes_ticker_created ON asset_quotes(ticker, created_at)")
+
+
+def load_cached_market_payload(max_age_seconds):
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT id, created_at, payload_json FROM market_snapshots ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    if not row:
+        return None
+
+    created_at = datetime.fromisoformat(row["created_at"])
+    age_seconds = (datetime.now() - created_at).total_seconds()
+    if age_seconds > max_age_seconds:
+        return None
+
+    payload = json.loads(row["payload_json"])
+    payload["snapshot_id"] = row["id"]
+    payload["cache"] = {"ativo": True, "idade_segundos": round(age_seconds)}
+    return payload
+
+
+def save_market_payload(payload):
+    created_at = payload["atualizado_iso"]
+    payload_to_store = dict(payload)
+    payload_to_store.pop("snapshot_id", None)
+    payload_json = json.dumps(payload_to_store, ensure_ascii=False)
+
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        cursor = connection.execute(
+            "INSERT INTO market_snapshots (created_at, source, payload_json) VALUES (?, ?, ?)",
+            (created_at, payload["fonte"], payload_json),
+        )
+        snapshot_id = cursor.lastrowid
+        connection.executemany(
+            """
+            INSERT INTO asset_quotes (
+                snapshot_id, ticker, created_at, price, variation, high, low, volume, source, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    snapshot_id,
+                    asset["ticker"],
+                    created_at,
+                    asset["preco"],
+                    asset["variacao"],
+                    asset["maxima"],
+                    asset["minima"],
+                    asset["volume"],
+                    asset["fonte"],
+                    json.dumps(asset, ensure_ascii=False),
+                )
+                for asset in payload["ativos"]
+            ],
+        )
+
+    return snapshot_id
+
+
+def fetch_market_snapshots(limit):
+    ensure_database()
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT id, created_at, source, payload_json
+            FROM market_snapshots
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    snapshots = []
+    for row in rows:
+        payload = json.loads(row["payload_json"])
+        snapshots.append(
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "source": row["source"],
+                "resumo": payload.get("resumo", {}),
+            }
+        )
+    return snapshots
 
 
 def enrich_assets_with_agents(assets):

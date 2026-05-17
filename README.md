@@ -6,6 +6,8 @@ Dashboard Flask para monitorar ativos da B3 usando a API da brapi.
 
 - Ativos B3: PETR4, VALE3, ITUB4, BBDC4, ABEV3, WEGE3, BBAS3 e B3SA3.
 - Versao desktop e mobile/iPhone.
+- Atualizacao em tempo real via Server-Sent Events (`/api/mercado/stream`).
+- Banco SQLite local com snapshots em `market_snapshots` e cotacoes em `asset_quotes`.
 - Autenticacao HTTP Basic.
 - Headers de seguranca.
 - Deploy preparado para Google Cloud Run.
@@ -18,10 +20,19 @@ Crie um arquivo `.env` com base em `.env.example`:
 BRAPI_TOKEN=sua_chave_brapi
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=sua_senha_forte
+DATABASE_PATH=dashboard_b3.sqlite3
+MARKET_REFRESH_SECONDS=60
+STREAM_HEARTBEAT_SECONDS=15
 HOST=0.0.0.0
 PORT=5000
 DEBUG=0
 ```
+
+## Dados em tempo real
+
+O dashboard abre `/api/mercado/stream` no navegador e recebe novas leituras continuamente. Cada leitura fica persistida no SQLite definido por `DATABASE_PATH`.
+
+Observacao: as cotacoes publicas da B3 normalmente possuem atraso e dados em tempo real oficiais dependem de contratacao B2B. A integracao atual usa `brapi.dev` quando `BRAPI_TOKEN` esta configurado e preserva a estrutura para trocar a fonte por um feed oficial da B3.
 
 Instale dependencias:
 

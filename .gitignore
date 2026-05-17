@@ -1,5 +1,6 @@
 .env
 *.log
+*.sqlite3
 __pycache__/
 .yfinance-cache/
 venv/
