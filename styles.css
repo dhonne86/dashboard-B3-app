@@ -356,13 +356,49 @@ select {
   font-weight: 600;
 }
 
-canvas {
+.dygraph-chart {
   display: block;
   width: 100%;
-  height: auto;
+  height: 390px;
+  min-height: 320px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+  padding: 12px;
+}
+
+.dygraph-chart .dygraph-label,
+.dygraph-chart .dygraph-title,
+.dygraph-chart .dygraph-legend {
+  color: var(--body);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+
+.dygraph-chart .dygraph-title {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.dygraph-chart .dygraph-legend {
+  left: 12px !important;
+  top: 34px !important;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92) !important;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.chart-fallback {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
 }
 
 .ranking {
@@ -728,8 +764,15 @@ td strong {
     min-width: 0;
   }
 
-  canvas {
-    height: 250px;
+  .dygraph-chart {
+    height: 310px;
+    min-height: 280px;
+    padding: 8px;
+  }
+
+  .dygraph-chart .dygraph-legend {
+    max-width: calc(100% - 24px);
+    font-size: 11px;
   }
 
   .ranking {

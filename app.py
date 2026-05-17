@@ -90,8 +90,8 @@ def add_security_headers(response):
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "connect-src 'self'; "
         "img-src 'self' data:; "
         "base-uri 'self'; "
@@ -721,6 +721,7 @@ def brapi_points(history, ticker):
         points.append(
             {
                 "date": date.strftime("%d/%m"),
+                "date_iso": date.date().isoformat(),
                 "open": round(float(item.get("open") or close), 2),
                 "high": round(float(item.get("high") or close), 2),
                 "low": round(float(item.get("low") or close), 2),
@@ -774,6 +775,7 @@ def sample_points(ticker):
         points.append(
             {
                 "date": date.strftime("%d/%m"),
+                "date_iso": date.date().isoformat(),
                 "open": round(price * 0.992, 2),
                 "high": round(price * 1.012, 2),
                 "low": round(price * 0.984, 2),
